@@ -1,5 +1,5 @@
 /* 想法速记 - 离线缓存（只缓存应用外壳，不碰 GitHub API） */
-const CACHE = 'idea-vault-v3';
+const CACHE = 'idea-vault-v4';
 const SHELL = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
