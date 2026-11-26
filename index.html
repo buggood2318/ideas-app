@@ -207,35 +207,40 @@ input:focus{border-color:var(--accent)}
     <h2>设置<span class="spacer"></span>
       <button class="icon-btn" data-close>关闭</button>
     </h2>
-    <label>GitHub 用户名</label>
-    <input type="text" id="cfgOwner" placeholder="例如 xiaoyan" autocapitalize="off">
-    <label>数据仓库名（私有）</label>
-    <input type="text" id="cfgRepo" placeholder="ideas-data">
-    <label>分支</label>
-    <input type="text" id="cfgBranch" placeholder="main">
-    <label>文件夹</label>
-    <input type="text" id="cfgPrefix" placeholder="ideas">
-    <label>访问令牌（Token）</label>
-    <input type="password" id="cfgToken" placeholder="github_pat_… 或 ghp_…">
-    <div class="hint">
-      令牌只存在这台手机的浏览器里，不会发到别处。<br>
-      建议用 Fine-grained token，<b>只授权这一个数据仓库</b>，权限只勾 Contents: Read and write。
-    </div>
-
-    <h2 style="margin-top:24px">对话（DeepSeek）</h2>
-    <label>接口地址</label>
-    <input type="text" id="cfgAiBase" placeholder="https://api.deepseek.com" autocapitalize="off">
-    <label>AI 密钥（sk- 开头）</label>
+    <label>DeepSeek 密钥（sk- 开头）</label>
     <input type="password" id="cfgAiKey" placeholder="sk-…" autocapitalize="off">
-    <label>模型</label>
-    <input type="text" id="cfgAiModel" placeholder="deepseek-chat" autocapitalize="off">
+    <div class="hint">填完点下面的「保存」，切到「对话」就能用了。</div>
+
+    <label style="margin-top:24px">GitHub 令牌（想同步存档再填）</label>
+    <input type="password" id="cfgToken" placeholder="github_pat_… （可以留空）">
     <div class="hint">
-      密钥只存在这台手机的浏览器里，不会上传到仓库。<br>
-      想让回答更爱深入推理，模型可填 <b>deepseek-reasoner</b>（更慢、更贵）。<br>
-      余额查询：<b>platform.deepseek.com</b>
+      留空也能正常用，只是想法只存在这台手机上、不进仓库。<br>
+      要同步就建 Fine-grained token，<b>只授权 ideas-data</b>，权限勾 Contents: Read and write。
     </div>
 
-    <button class="btn" id="btnSaveCfg">保存并测试连接</button>
+    <button class="btn" id="btnSaveCfg">保存</button>
+
+    <details style="margin-top:16px">
+      <summary style="font-size:13px;color:var(--muted);cursor:pointer;padding:6px 0">
+        高级设置（已经填好，一般不用动）
+      </summary>
+      <label>GitHub 用户名</label>
+      <input type="text" id="cfgOwner" autocapitalize="off">
+      <label>数据仓库名</label>
+      <input type="text" id="cfgRepo">
+      <label>分支</label>
+      <input type="text" id="cfgBranch">
+      <label>文件夹</label>
+      <input type="text" id="cfgPrefix">
+      <label>AI 接口地址</label>
+      <input type="text" id="cfgAiBase" autocapitalize="off">
+      <label>模型</label>
+      <input type="text" id="cfgAiModel" autocapitalize="off">
+      <div class="hint">
+        想让回答更爱深想，模型填 <b>deepseek-reasoner</b>（更慢更贵）。<br>
+        余额查询：<b>platform.deepseek.com</b>
+      </div>
+    </details>
     <button class="btn ghost" data-close>取消</button>
     <button class="btn danger" id="btnClearCfg">清除本机设置</button>
     <button class="btn ghost" id="btnClearChat">清空对话记录</button>
@@ -276,6 +281,16 @@ input:focus{border-color:var(--accent)}
 
   var AI_DEFAULT_BASE = 'https://api.deepseek.com';
   var AI_DEFAULT_MODEL = 'deepseek-chat';
+
+  // 这些都已经内置好了，用户只需要填「DeepSeek 密钥」和（可选）「GitHub 令牌」
+  var DEFAULTS = {
+    owner: 'buggood2318',
+    repo: 'ideas-data',
+    branch: 'main',
+    prefix: 'ideas',
+    aiBase: 'https://api.deepseek.com',
+    aiModel: 'deepseek-chat'
+  };
   var CHAT_MAX = 80;                    // 最多保留多少条消息，防止越存越大
 
   function saveQueue() { lsSet('iv.queue', queue); }
@@ -403,7 +418,7 @@ input:focus{border-color:var(--accent)}
   // ---------- 上传队列 ----------
   var syncing = false;
   function syncQueue() {
-    if (!cfg || !queue.length || syncing) return Promise.resolve();
+    if (!cfg || !cfg.token || !queue.length || syncing) return Promise.resolve();
     syncing = true;
     var done = 0;
     function step() {
@@ -431,8 +446,11 @@ input:focus{border-color:var(--accent)}
   }
 
   function renderStatus() {
-    if (!cfg) {
-      setStatus(queue.length ? ('未设置仓库 · ' + queue.length + ' 条待上传') : '未设置仓库', 'warn');
+    if (!cfg || !cfg.token) {
+      var base = (ai && ai.key) ? '对话就绪' : '未设置';
+      setStatus(queue.length
+        ? (base + ' · ' + queue.length + ' 条没上传')
+        : (base + ' · 未接仓库'), queue.length ? 'warn' : '');
       return;
     }
     if (queue.length) setStatus(queue.length + ' 条待上传', 'warn');
@@ -453,9 +471,8 @@ input:focus{border-color:var(--accent)}
     if (navigator.vibrate) navigator.vibrate(12);
     input.focus();
 
-    if (!cfg) {
-      setStatus('已存到这台手机 · 设置仓库后自动上传', 'warn');
-      openSheet('#sheetSettings');
+    if (!cfg || !cfg.token) {
+      setStatus('已存到这台手机（还没接仓库）', 'warn');
       return;
     }
     setStatus('上传中…');
@@ -528,29 +545,25 @@ input:focus{border-color:var(--accent)}
 
   // ---------- 设置 ----------
   $('#btnSettings').addEventListener('click', function () {
-    $('#cfgOwner').value = cfg ? cfg.owner : '';
-    $('#cfgRepo').value = cfg ? cfg.repo : '';
-    $('#cfgBranch').value = cfg ? cfg.branch : 'main';
-    $('#cfgPrefix').value = cfg ? cfg.prefix : 'ideas';
-    $('#cfgToken').value = cfg ? cfg.token : '';
-    $('#cfgAiBase').value = ai ? ai.base : '';
-    $('#cfgAiKey').value = ai ? ai.key : '';
-    $('#cfgAiModel').value = ai ? ai.model : '';
+    $('#cfgOwner').value = (cfg && cfg.owner) || DEFAULTS.owner;
+    $('#cfgRepo').value = (cfg && cfg.repo) || DEFAULTS.repo;
+    $('#cfgBranch').value = (cfg && cfg.branch) || DEFAULTS.branch;
+    $('#cfgPrefix').value = (cfg && cfg.prefix) || DEFAULTS.prefix;
+    $('#cfgToken').value = (cfg && cfg.token) || '';
+    $('#cfgAiBase').value = (ai && ai.base) || DEFAULTS.aiBase;
+    $('#cfgAiKey').value = (ai && ai.key) || '';
+    $('#cfgAiModel').value = (ai && ai.model) || DEFAULTS.aiModel;
     openSheet('#sheetSettings');
   });
 
   $('#btnSaveCfg').addEventListener('click', function () {
     var next = {
-      owner: $('#cfgOwner').value.trim(),
-      repo: $('#cfgRepo').value.trim(),
-      branch: ($('#cfgBranch').value.trim() || 'main'),
-      prefix: ($('#cfgPrefix').value.trim() || 'ideas'),
+      owner: $('#cfgOwner').value.trim() || DEFAULTS.owner,
+      repo: $('#cfgRepo').value.trim() || DEFAULTS.repo,
+      branch: $('#cfgBranch').value.trim() || DEFAULTS.branch,
+      prefix: $('#cfgPrefix').value.trim() || DEFAULTS.prefix,
       token: $('#cfgToken').value.trim()
     };
-    if (!next.owner || !next.repo || !next.token) {
-      setStatus('用户名 / 仓库 / 令牌 都要填', 'err');
-      return;
-    }
     ai = {
       base: ($('#cfgAiBase').value.trim() || AI_DEFAULT_BASE).replace(/\/+$/, ''),
       key: $('#cfgAiKey').value.trim(),
@@ -558,19 +571,35 @@ input:focus{border-color:var(--accent)}
     };
     lsSet('iv.ai', ai);
 
+    var aiReady = !!ai.key;
+    var repoReady = !!next.token;
+    if (!aiReady && !repoReady) {
+      setStatus('至少填一样：DeepSeek 密钥，或 GitHub 令牌', 'err');
+      return;
+    }
+
     var prev = cfg;
     cfg = next;
+    lsSet('iv.cfg', cfg);
+
+    // 没填令牌：只保存，不去测仓库
+    if (!repoReady) {
+      $('#sheetSettings').hidden = true;
+      setStatus(aiReady ? '对话已就绪 ✓' : '已保存', 'ok');
+      return;
+    }
+
     setStatus('测试连接…');
     gh('/repos/' + cfg.owner + '/' + cfg.repo)
       .then(function (r) {
-        lsSet('iv.cfg', cfg);
         $('#sheetSettings').hidden = true;
         setStatus('连接正常：' + r.full_name + (r.private ? '（私有）' : '（公开！）'), 'ok');
         return syncQueue();
       })
       .then(function () { renderStatus(); })
       .catch(function (e) {
-        if (!prev) cfg = null; else cfg = prev;
+        cfg = prev || null;
+        if (cfg) lsSet('iv.cfg', cfg); else localStorage.removeItem('iv.cfg');
         setStatus('连接失败：' + (e.status || '') + ' ' + (e.message || ''), 'err');
       });
   });
@@ -628,7 +657,7 @@ input:focus{border-color:var(--accent)}
 
   // 从云端拉当月 + 上月，合并到本机历史（按 时间+内容 去重）
   function pullFromCloud() {
-    if (!cfg) return;
+    if (!cfg || !cfg.token) return;
     var now = new Date();
     var paths = [
       mdPath(now.getTime()),
@@ -754,8 +783,8 @@ input:focus{border-color:var(--accent)}
     log.push({ ts: item.ts, text: item.text, synced: false });
     saveLog();
     if (navigator.vibrate) navigator.vibrate(12);
-    if (!cfg) {
-      setStatus('已存到这台手机 · 设置仓库后自动上传', 'warn');
+    if (!cfg || !cfg.token) {
+      setStatus('已存到这台手机（还没接仓库）', 'warn');
       return;
     }
     syncQueue().then(function () {
@@ -894,12 +923,12 @@ input:focus{border-color:var(--accent)}
 
   // ---------- 启动 ----------
   renderStatus();
-  if (cfg) syncQueue().then(renderStatus, function () {});
+  if (cfg && cfg.token) syncQueue().then(renderStatus, function () {});
   window.addEventListener('online', function () {
-    if (cfg) syncQueue().then(renderStatus, function () {});
+    if (cfg && cfg.token) syncQueue().then(renderStatus, function () {});
   });
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && cfg && queue.length) syncQueue().then(renderStatus, function () {});
+    if (!document.hidden && cfg && cfg.token && queue.length) syncQueue().then(renderStatus, function () {});
   });
   // 自动聚焦（手机上可能不弹键盘，无害）
   setTimeout(function () { try { input.focus(); } catch (e) {} }, 300);
