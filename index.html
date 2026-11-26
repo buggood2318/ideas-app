@@ -185,6 +185,10 @@ input:focus{border-color:var(--accent)}
 }
 .rec-btn:active{transform:scale(.99)}
 .rec-btn.recording{background:var(--err);animation:pulse 1.4s infinite}
+.rec-btn.minor{
+  flex:0 0 auto;padding:0 14px;background:var(--card);color:var(--text);
+  border:1px solid var(--line);font-size:14px;font-weight:500;
+}
 .rec-dot{width:10px;height:10px;border-radius:50%;background:#fff;opacity:.9}
 </style>
 </head>
@@ -230,7 +234,11 @@ input:focus{border-color:var(--accent)}
 <main id="viewVoice" hidden>
   <div class="voice-list" id="voiceList"></div>
   <div class="voice-bar">
-    <button id="btnRec" class="rec-btn">
+    <button id="btnSysRec" class="rec-btn" hidden>
+      <span class="rec-dot"></span>
+      <span id="sysRecLabel">直接说话转文字</span>
+    </button>
+    <button id="btnRec" class="rec-btn" hidden>
       <span class="rec-dot"></span>
       <span id="recLabel">按住说话</span>
     </button>
@@ -967,6 +975,15 @@ input:focus{border-color:var(--accent)}
   var mediaRec = null, recChunks = [], recTimer = null, recStream = null, recStarted = 0;
   var voicePending = lsGet('iv.voicePending', []);   // [{name,ts}] 已上传、还没转写
   var voiceItems = [];                               // 来自 voices/index.json
+  var sysResult = null;                              // 系统语音识别的当场结果
+  var sysRecOn = false;
+  var CapSR = null;                                  // Capacitor 语音识别插件（仅 APK 里有）
+  try {
+    if (window.Capacitor && window.Capacitor.Plugins &&
+        window.Capacitor.Plugins.SpeechRecognition) {
+      CapSR = window.Capacitor.Plugins.SpeechRecognition;
+    }
+  } catch (e) { CapSR = null; }
 
   function stemOf(n) { return String(n).replace(/\.[^.]+$/, ''); }
   function fileStamp(d) {
@@ -1128,6 +1145,14 @@ input:focus{border-color:var(--accent)}
   function renderVoices() {
     var box = $('#voiceList');
     var html = '';
+    if (sysResult) {
+      html += '<div class="voice-item' + (sysResult.live ? ' pending' : '') + '">' +
+        '<div class="vh">🎤 ' + (sysResult.live ? '正在听…（再点按钮结束）'
+          : fmtTime(new Date(sysResult.ts))) + '</div>' +
+        '<div class="vt">' + escapeHtml(sysResult.text || '（还没听到内容）') + '</div>' +
+        (sysResult.live ? '' : '<div class="acts"><button data-syssave="1">存进速记</button></div>') +
+        '</div>';
+    }
     voicePending.forEach(function (p) {
       html += '<div class="voice-item pending"><div class="vh">⏳ ' + fmtTime(new Date(p.ts)) + '</div>' +
         '<div class="vt">等电脑转写中…（电脑开着就会自动处理）</div></div>';
@@ -1144,14 +1169,106 @@ input:focus{border-color:var(--accent)}
   }
 
   $('#voiceList').addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('[data-vsave]') : null;
-    if (!b) return;
-    var v = voiceItems[+b.getAttribute('data-vsave')];
-    if (v && v.text) {
-      storeIdea(v.text);
-      b.textContent = '已存 ✓';
-      b.disabled = true;
+    var t = e.target;
+    var b = t.closest ? t.closest('[data-vsave]') : null;
+    if (b) {
+      var v = voiceItems[+b.getAttribute('data-vsave')];
+      if (v && v.text) { storeIdea(v.text); b.textContent = '已存 ✓'; b.disabled = true; }
+      return;
     }
+    var c = t.closest ? t.closest('[data-syssave]') : null;
+    if (c) {
+      if (sysResult && sysResult.text) {
+        storeIdea(sysResult.text);
+        c.textContent = '已存 ✓';
+        c.disabled = true;
+      }
+    }
+  });
+
+  // ----- 手机自带的语音识别（APK 里才有）-----
+  function initVoice() {
+    if (!CapSR || !CapSR.available) {
+      $('#btnRec').hidden = false;
+      return;
+    }
+    CapSR.available().then(function (r) {
+      if (r && r.available) {
+        $('#btnSysRec').hidden = false;
+        $('#btnRec').hidden = false;
+        $('#btnRec').classList.add('minor');
+      } else {
+        $('#btnRec').hidden = false;
+      }
+    }).catch(function () {
+      $('#btnRec').hidden = false;
+    });
+  }
+
+  function startSysRec() {
+    setStatus('准备麦克风…', '');
+    CapSR.requestPermissions().then(function (p) {
+      var st = p && p.speechRecognition;
+      if (st && st !== 'granted') {
+        setStatus('没给语音识别权限，去手机设置里允许', 'err');
+        return;
+      }
+      runSysRec();
+    }).catch(function (e) {
+      setStatus('启动失败：' + (e.message || e), 'err');
+    });
+  }
+
+  function runSysRec() {
+    sysRecOn = true;
+    sysResult = { text: '', ts: Date.now(), live: true };
+    $('#btnSysRec').classList.add('recording');
+    $('#sysRecLabel').textContent = '说完点这里';
+    setStatus('在听… 说完再点一下按钮', '');
+    renderVoices();
+    try { CapSR.removeAllListeners(); } catch (e) {}
+    CapSR.addListener('partialResults', function (data) {
+      var t = (data && data.matches && data.matches[0]) || '';
+      if (t && sysResult) {
+        sysResult.text = t;
+        renderVoices();
+      }
+    });
+    CapSR.addListener('listeningState', function (data) {
+      if (data && data.status === 'stopped') finishSysRec();
+    });
+    CapSR.start({ language: 'zh-CN', partialResults: true, popup: false })
+      .catch(function (e) {
+        setStatus('识别失败：' + (e.message || e), 'err');
+        finishSysRec();
+      });
+  }
+
+  function stopSysRec() {
+    if (!sysRecOn) return;
+    try { if (CapSR && CapSR.stop) CapSR.stop(); } catch (e) {}
+    setTimeout(finishSysRec, 500);   // 给插件吐最后一段的时间
+  }
+
+  function finishSysRec() {
+    if (!sysRecOn) return;
+    sysRecOn = false;
+    $('#btnSysRec').classList.remove('recording');
+    $('#sysRecLabel').textContent = '直接说话转文字';
+    if (sysResult) {
+      sysResult.live = false;
+      if (!sysResult.text) {
+        sysResult = null;
+        setStatus('没识别到内容，再说一次试试', 'warn');
+      } else {
+        setStatus('识别好了，点「存进速记」保存', 'ok');
+      }
+    }
+    renderVoices();
+  }
+
+  $('#btnSysRec').addEventListener('click', function () {
+    if (sysRecOn) stopSysRec(); else startSysRec();
   });
 
   var btnRec = $('#btnRec');
@@ -1160,6 +1277,7 @@ input:focus{border-color:var(--accent)}
   btnRec.addEventListener('pointercancel', function () { stopRec(); });
   btnRec.addEventListener('pointerleave', function () { if (mediaRec) stopRec(); });
   $('#btnVoiceRefresh').addEventListener('click', loadVoices);
+  initVoice();
 
   // ---------- 启动 ----------
   renderStatus();
