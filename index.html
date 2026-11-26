@@ -161,6 +161,31 @@ input:focus{border-color:var(--accent)}
 .cursor{display:inline-block;width:7px;height:15px;background:var(--accent);
   animation:blink 1s step-end infinite;vertical-align:-2px;border-radius:2px}
 @keyframes blink{50%{opacity:0}}
+
+/* ---------- 语音 ---------- */
+#viewVoice{padding-bottom:0}
+.voice-list{flex:1;overflow-y:auto;padding:4px 0 12px;min-height:0}
+.voice-item{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:12px 14px;margin-bottom:10px;
+}
+.voice-item .vh{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:6px}
+.voice-item .vt{font-size:15.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.voice-item .acts{margin-top:9px;display:flex;gap:8px}
+.voice-item .acts button{
+  font-size:12px;padding:5px 10px;border-radius:9px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);font-family:inherit;cursor:pointer;
+}
+.voice-item.pending{opacity:.8;border-style:dashed}
+.voice-bar{display:flex;gap:10px;padding:8px 0 12px;align-items:center}
+.rec-btn{
+  flex:1;height:52px;border-radius:14px;border:0;background:var(--accent);color:#fff;
+  font-size:17px;font-weight:600;font-family:inherit;display:flex;align-items:center;
+  justify-content:center;gap:9px;cursor:pointer;user-select:none;-webkit-user-select:none;
+}
+.rec-btn:active{transform:scale(.99)}
+.rec-btn.recording{background:var(--err);animation:pulse 1.4s infinite}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:#fff;opacity:.9}
 </style>
 </head>
 <body>
@@ -175,6 +200,7 @@ input:focus{border-color:var(--accent)}
 <nav class="tabs">
   <button class="tab active" data-view="note">速记</button>
   <button class="tab" data-view="chat">对话</button>
+  <button class="tab" data-view="voice">语音</button>
 </nav>
 
 <main id="viewNote">
@@ -198,6 +224,17 @@ input:focus{border-color:var(--accent)}
     <textarea id="chatInput" rows="1" placeholder="问点什么，或者把想法丢进来让我分析…"
       autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
     <button id="btnSend">发送</button>
+  </div>
+</main>
+
+<main id="viewVoice" hidden>
+  <div class="voice-list" id="voiceList"></div>
+  <div class="voice-bar">
+    <button id="btnRec" class="rec-btn">
+      <span class="rec-dot"></span>
+      <span id="recLabel">按住说话</span>
+    </button>
+    <button id="btnVoiceRefresh" class="icon-btn" style="height:52px">刷新</button>
   </div>
 </main>
 
@@ -724,10 +761,15 @@ input:focus{border-color:var(--accent)}
       });
       $('#viewNote').hidden = view !== 'note';
       $('#viewChat').hidden = view !== 'chat';
+      $('#viewVoice').hidden = view !== 'voice';
       setTimeout(function () {
-        try { (view === 'chat' ? $('#chatInput') : input).focus(); } catch (e) {}
+        try {
+          if (view === 'chat') $('#chatInput').focus();
+          else if (view === 'note') input.focus();
+        } catch (e) {}
       }, 80);
       if (view === 'chat') renderChat();
+      if (view === 'voice') loadVoices();
     });
   });
 
@@ -921,8 +963,207 @@ input:focus{border-color:var(--accent)}
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
   });
 
+  // ---------- 语音 ----------
+  var mediaRec = null, recChunks = [], recTimer = null, recStream = null, recStarted = 0;
+  var voicePending = lsGet('iv.voicePending', []);   // [{name,ts}] 已上传、还没转写
+  var voiceItems = [];                               // 来自 voices/index.json
+
+  function stemOf(n) { return String(n).replace(/\.[^.]+$/, ''); }
+  function fileStamp(d) {
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' +
+      pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+  function canRecord() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  }
+
+  function stopStream() {
+    if (recStream) {
+      try { recStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      recStream = null;
+    }
+  }
+
+  function startRec() {
+    if (!cfg || !cfg.token) {
+      setStatus('先在设置里填 GitHub 令牌，录音才能上传', 'err');
+      return;
+    }
+    if (mediaRec) return;
+    if (!canRecord()) {
+      setStatus('这个环境不支持录音，改从文件选', 'warn');
+      pickAudio();
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      recStream = stream;
+      recChunks = [];
+      var mime = '';
+      ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].forEach(function (m) {
+        if (!mime && window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) mime = m;
+      });
+      var opts = { audioBitsPerSecond: 32000 };
+      if (mime) opts.mimeType = mime;
+      mediaRec = new MediaRecorder(stream, opts);
+      mediaRec.ondataavailable = function (e) { if (e.data && e.data.size) recChunks.push(e.data); };
+      mediaRec.onstop = function () {
+        stopStream();
+        var type = (mediaRec && mediaRec.mimeType) || mime || 'audio/webm';
+        var blob = new Blob(recChunks, { type: type });
+        mediaRec = null;
+        $('#btnRec').classList.remove('recording');
+        $('#recLabel').textContent = '按住说话';
+        if (blob.size < 1200) { setStatus('太短了，没录到声音', 'warn'); return; }
+        uploadVoice(blob, type);
+      };
+      mediaRec.start();
+      recStarted = Date.now();
+      $('#btnRec').classList.add('recording');
+      $('#recLabel').textContent = '松开结束';
+      setStatus('在录… 松开结束', '');
+      recTimer = setTimeout(stopRec, 120000);   // 最长 2 分钟
+    }).catch(function (e) {
+      setStatus('麦克风打不开（' + (e.message || e) + '），改从文件选', 'warn');
+      pickAudio();
+    });
+  }
+
+  function stopRec() {
+    if (recTimer) { clearTimeout(recTimer); recTimer = null; }
+    if (mediaRec && mediaRec.state !== 'inactive') {
+      try { mediaRec.stop(); } catch (e) {}
+    } else {
+      stopStream();
+      $('#btnRec').classList.remove('recording');
+      $('#recLabel').textContent = '按住说话';
+    }
+  }
+
+  function uploadVoice(blob, type) {
+    var ext = String(type).indexOf('mp4') >= 0 ? 'm4a' : 'webm';
+    uploadRaw(blob, fileStamp(new Date()) + '.' + ext);
+  }
+
+  function blobToB64(blob) {
+    if (blob.arrayBuffer) {
+      return blob.arrayBuffer().then(function (buf) {
+        var bytes = new Uint8Array(buf), bin = '', CH = 0x8000;
+        for (var i = 0; i < bytes.length; i += CH) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+        }
+        return btoa(bin);
+      });
+    }
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result).split(',')[1] || ''); };
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function uploadRaw(blobOrFile, name) {
+    setStatus('上传中…', '');
+    blobToB64(blobOrFile).then(function (b64) {
+      putVoice(name, b64);
+    }).catch(function () {
+      setStatus('读文件失败', 'err');
+    });
+  }
+
+  function putVoice(name, b64) {
+    var path = '/repos/' + cfg.owner + '/' + cfg.repo + '/contents/voices/' + encodeURIComponent(name);
+    gh(path, {
+      method: 'PUT',
+      body: JSON.stringify({
+        message: '语音 ' + name,
+        content: b64,
+        branch: cfg.branch
+      })
+    }).then(function () {
+      voicePending.unshift({ name: stemOf(name), ts: Date.now() });
+      lsSet('iv.voicePending', voicePending);
+      setStatus('已上传 · 等电脑转写', 'ok');
+      renderVoices();
+    }).catch(function (e) {
+      setStatus('上传失败：' + (e.message || '网络问题'), 'err');
+    });
+  }
+
+  function pickAudio() {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'audio/*';
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      if (f.size > 8 * 1048576) { setStatus('文件太大（超过 8MB），传不上去', 'err'); return; }
+      var ext = (f.name.split('.').pop() || 'm4a').toLowerCase().replace(/[^a-z0-9]/g, '');
+      uploadRaw(f, fileStamp(new Date()) + '.' + (ext || 'm4a'));
+    };
+    inp.click();
+  }
+
+  function loadVoices() {
+    if (!cfg || !cfg.token) { renderVoices(); return; }
+    var path = '/repos/' + cfg.owner + '/' + cfg.repo + '/contents/voices/index.json?ref=' +
+      encodeURIComponent(cfg.branch);
+    setStatus('拉取转写结果…', '');
+    gh(path).then(function (r) {
+      var data = {};
+      try { data = JSON.parse(b64decodeUtf8(r.content)); } catch (e) {}
+      voiceItems = (data && data.items) || [];
+      var names = voiceItems.map(function (x) { return x.name; });
+      var before = voicePending.length;
+      voicePending = voicePending.filter(function (p) { return names.indexOf(p.name) < 0; });
+      if (before !== voicePending.length) lsSet('iv.voicePending', voicePending);
+      renderVoices();
+      setStatus(voiceItems.length ? ('共 ' + voiceItems.length + ' 条转写') : '还没有转写结果', '');
+    }).catch(function (e) {
+      if (e.status === 404) { voiceItems = []; renderVoices(); setStatus('还没有转写结果', ''); }
+      else setStatus('拉取失败：' + (e.message || ''), 'warn');
+    });
+  }
+
+  function renderVoices() {
+    var box = $('#voiceList');
+    var html = '';
+    voicePending.forEach(function (p) {
+      html += '<div class="voice-item pending"><div class="vh">⏳ ' + fmtTime(new Date(p.ts)) + '</div>' +
+        '<div class="vt">等电脑转写中…（电脑开着就会自动处理）</div></div>';
+    });
+    for (var i = 0; i < voiceItems.length; i++) {
+      var v = voiceItems[i];
+      html += '<div class="voice-item"><div class="vh">🎙 ' + escapeHtml(v.transcribed_at || '') +
+        (v.seconds ? ' · ' + v.seconds + ' 秒' : '') + '</div>' +
+        '<div class="vt">' + escapeHtml(v.text || '') + '</div>' +
+        '<div class="acts"><button data-vsave="' + i + '">存进速记</button></div></div>';
+    }
+    if (!html) html = '<div class="empty">还没有录音。<br>按住下面按钮说话，松开就上传。</div>';
+    box.innerHTML = html;
+  }
+
+  $('#voiceList').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-vsave]') : null;
+    if (!b) return;
+    var v = voiceItems[+b.getAttribute('data-vsave')];
+    if (v && v.text) {
+      storeIdea(v.text);
+      b.textContent = '已存 ✓';
+      b.disabled = true;
+    }
+  });
+
+  var btnRec = $('#btnRec');
+  btnRec.addEventListener('pointerdown', function (e) { e.preventDefault(); startRec(); });
+  btnRec.addEventListener('pointerup', function (e) { e.preventDefault(); stopRec(); });
+  btnRec.addEventListener('pointercancel', function () { stopRec(); });
+  btnRec.addEventListener('pointerleave', function () { if (mediaRec) stopRec(); });
+  $('#btnVoiceRefresh').addEventListener('click', loadVoices);
+
   // ---------- 启动 ----------
   renderStatus();
+  renderVoices();
   if (cfg && cfg.token) syncQueue().then(renderStatus, function () {});
   window.addEventListener('online', function () {
     if (cfg && cfg.token) syncQueue().then(renderStatus, function () {});
