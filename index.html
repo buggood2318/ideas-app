@@ -26,6 +26,9 @@
   }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* 关键：main{display:flex} 会盖掉 [hidden] 的 display:none，
+   导致切到「对话」时速记的大文本框还占着半屏（2026-11-27 修） */
+[hidden]{display:none !important}
 html,body{height:100%}
 body{
   margin:0;background:var(--bg);color:var(--text);
@@ -45,9 +48,9 @@ header .spacer{flex:1}
   border-radius:12px;padding:7px 12px;font-size:13px;cursor:pointer;
 }
 .icon-btn:active{transform:scale(.96)}
-main{flex:1;display:flex;flex-direction:column;padding:0 16px 12px;min-height:0}
+main{flex:1 1 auto;display:flex;flex-direction:column;padding:0 16px 12px;min-height:0;overflow:hidden}
 textarea{
-  flex:1;width:100%;min-height:120px;resize:none;
+  flex:1 1 auto;width:100%;min-height:0;resize:none;
   background:var(--card);color:var(--text);
   border:1px solid var(--line);border-radius:var(--radius);
   padding:16px;font-size:17px;line-height:1.6;
@@ -56,12 +59,15 @@ textarea{
 textarea:focus{border-color:var(--accent)}
 textarea::placeholder{color:var(--muted)}
 .toolbar{display:flex;align-items:center;gap:10px;padding-top:12px}
-#btnVoice{
-  width:52px;height:52px;flex:0 0 auto;border-radius:50%;
-  border:1px solid var(--line);background:var(--card);font-size:20px;
-  cursor:pointer;
+.mic-btn{
+  flex:0 0 auto;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);background:var(--card);color:var(--text);
+  cursor:pointer;transition:background .15s,border-color .15s;
 }
-#btnVoice.rec{background:var(--accent-weak);border-color:var(--accent);animation:pulse 1.2s infinite}
+#btnVoice{width:52px;height:52px}
+#btnChatVoice{width:46px;height:46px}
+.mic-btn:disabled{opacity:.4}
+.mic-btn.rec{background:var(--accent-weak);border-color:var(--accent);color:var(--accent);animation:pulse 1.2s infinite}
 @keyframes pulse{50%{opacity:.55}}
 #status{flex:1;font-size:12px;color:var(--muted);line-height:1.4;min-width:0}
 #status.ok{color:var(--ok)}
@@ -126,10 +132,11 @@ input:focus{border-color:var(--accent)}
 .tab.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 
 /* ---------- 对话 ---------- */
-#viewChat{padding-bottom:0}
+/* 布局铁律：聊天记录区可伸缩、输入区不被挤压；键盘弹出时也不把输入框顶出屏幕 */
+#viewChat{padding-bottom:0;overflow:hidden}
 .chatlog{
-  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
-  padding:4px 0 12px;min-height:0;
+  flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
+  padding:4px 0 12px;min-height:0;overscroll-behavior:contain;
 }
 .msg{
   max-width:88%;padding:11px 14px;border-radius:15px;font-size:15.5px;
@@ -144,11 +151,14 @@ input:focus{border-color:var(--accent)}
   background:rgba(255,255,255,.6);color:var(--muted);font-family:inherit;cursor:pointer;
 }
 .msg.ai .acts button{background:transparent}
-.chatbar{display:flex;gap:8px;padding:8px 0 12px;align-items:flex-end}
+.chatbar{
+  display:flex;gap:8px;align-items:flex-end;flex:0 0 auto;
+  padding:8px 0 calc(12px + env(safe-area-inset-bottom));
+}
 #chatInput{
-  flex:1;min-height:46px;max-height:120px;resize:none;
+  flex:1 1 auto;min-height:92px;max-height:38vh;resize:none;
   background:var(--card);color:var(--text);border:1px solid var(--line);
-  border-radius:14px;padding:12px 14px;font-size:16px;line-height:1.45;
+  border-radius:14px;padding:12px 14px;font-size:16px;line-height:1.5;
   font-family:inherit;outline:none;
 }
 #chatInput:focus{border-color:var(--accent)}
@@ -210,7 +220,7 @@ input:focus{border-color:var(--accent)}
 <main id="viewNote">
   <textarea id="input" placeholder="想到什么，直接写下…&#10;（长想法可以分段，写了就自动保存）" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
   <div class="toolbar">
-    <button id="btnVoice" title="语音输入" aria-label="语音输入">
+    <button id="btnVoice" class="mic-btn" title="语音输入" aria-label="语音输入">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="2.5" width="6" height="11" rx="3"></rect>
         <path d="M5 11a7 7 0 0 0 14 0"></path>
@@ -225,7 +235,14 @@ input:focus{border-color:var(--accent)}
 <main id="viewChat" hidden>
   <div class="chatlog" id="chatLog"></div>
   <div class="chatbar">
-    <textarea id="chatInput" rows="1" placeholder="问点什么，或者把想法丢进来让我分析…"
+    <button id="btnChatVoice" class="mic-btn" title="语音输入" aria-label="语音输入">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2.5" width="6" height="11" rx="3"></rect>
+        <path d="M5 11a7 7 0 0 0 14 0"></path>
+        <line x1="12" y1="18" x2="12" y2="21.5"></line>
+      </svg>
+    </button>
+    <textarea id="chatInput" rows="3" placeholder="问点什么，或者把想法丢进来让我分析…"
       autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
     <button id="btnSend">发送</button>
   </div>
@@ -310,6 +327,146 @@ input:focus{border-color:var(--accent)}
 
   var $ = function (s) { return document.querySelector(s); };
   var input = $('#input'), statusEl = $('#status');
+
+  // ---------- 统一语音输入（速记页 / 对话页共用）----------
+  // 优先级：① APK 内 Capacitor 语音识别插件（手机自带识别）② 浏览器 Web Speech（Chrome）
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var CapSR = null;      // 手机系统识别（联网、部分 ROM 不可用）
+  var Sherpa = null;     // 端侧离线识别（模型打进 APK，最优）
+  try {
+    if (window.Capacitor && window.Capacitor.Plugins) {
+      Sherpa = window.Capacitor.Plugins.SherpaAsr || null;
+      CapSR = window.Capacitor.Plugins.SpeechRecognition || null;
+    }
+  } catch (e) { CapSR = null; Sherpa = null; }
+  var sherpaLoaded = false;
+
+  var DICT_HINT = '🎙 在听… 说完再点一下麦克风';
+  var dict = { on: false, stop: null, btn: null };
+
+  function dictAvailable() { return !!(Sherpa || CapSR || SR); }
+
+  function dictate(btn, el) {
+    if (!el || !btn) return;
+    if (dict.on) { try { dict.stop && dict.stop(); } catch (e) {} return; }
+    if (!dictAvailable()) {
+      setStatus('这个环境用不了语音：APK 里用手机识别，用 Chrome 打开网页可识别', 'warn');
+      return;
+    }
+    var base = el.value ? el.value.replace(/\s+$/, '') + ' ' : '';
+    var ph0 = el.getAttribute('placeholder') || '';
+    var finalText = '';
+    var lastText = '';
+
+    function apply(text) {
+      el.value = base + text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    function endUI(msg, kind) {
+      if (!dict.on) return;
+      dict.on = false; dict.stop = null; dict.btn = null;
+      btn.classList.remove('rec');
+      el.setAttribute('placeholder', ph0);
+      if (msg) setStatus(msg, kind || '');
+    }
+    dict.on = true; dict.btn = btn;
+    btn.classList.add('rec');
+    el.setAttribute('placeholder', DICT_HINT);
+
+    // ① 端侧离线模型（APK 内置，不联网）
+    if (Sherpa) {
+      var sherpaStopping = false;
+      dict.stop = function () {
+        if (sherpaStopping) return;
+        sherpaStopping = true;
+        try { Sherpa.removeAllListeners && Sherpa.removeAllListeners(); } catch (e) {}
+        Promise.resolve(Sherpa.stop && Sherpa.stop()).then(function (r) {
+          if (r && r.text) { lastText = r.text; apply(r.text); }
+          endUI(lastText ? '语音已转成文字' : '没听到内容，再说一次', lastText ? 'ok' : 'warn');
+        }, function () {
+          endUI(lastText ? '语音已转成文字' : '没听到内容，再说一次', lastText ? 'ok' : 'warn');
+        });
+      };
+      try {
+        Sherpa.addListener('partial', function (d) {
+          if (d && d.text) { lastText = d.text; apply(d.text); }
+        });
+        Sherpa.addListener('final', function (d) {
+          if (d && d.text) { lastText = d.text; apply(d.text); }
+        });
+        Sherpa.addListener('error', function (d) {
+          endUI('识别出错：' + ((d && d.text) || '未知'), 'err');
+        });
+      } catch (e) {}
+      var beginSherpa = function () {
+        setStatus('在听… 说完点一下麦克风', '');
+        Sherpa.start().catch(function (e) {
+          endUI('麦克风启动失败：' + ((e && e.message) || e), 'err');
+        });
+      };
+      if (sherpaLoaded) { beginSherpa(); }
+      else {
+        setStatus('正在加载离线语音模型…', '');
+        Sherpa.init().then(function () { sherpaLoaded = true; beginSherpa(); },
+          function (e) { endUI('模型加载失败：' + ((e && e.message) || e), 'err'); });
+      }
+      return;
+    }
+
+    // ② 浏览器 Web Speech
+    if (!CapSR && SR) {
+      var rec = new SR();
+      rec.lang = 'zh-CN';
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = function (ev) {
+        var interim = '';
+        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+          var r = ev.results[i];
+          if (r.isFinal) finalText += r[0].transcript;
+          else interim += r[0].transcript;
+        }
+        lastText = finalText + interim;
+        apply(lastText);
+      };
+      rec.onerror = function (e) { endUI('语音出错：' + (e.error || '未知'), 'warn'); };
+      rec.onend = function () {
+        endUI(lastText ? '语音已转成文字' : '没听到内容，再说一次', lastText ? 'ok' : 'warn');
+      };
+      dict.stop = function () { try { rec.stop(); } catch (e) {} };
+      try { rec.start(); } catch (e) { endUI('启动失败：' + (e.message || e), 'err'); }
+      return;
+    }
+
+    // ③ APK 内的系统语音识别（Capacitor 插件；partialResults 给的是累计文本）
+    var stopping = false;
+    dict.stop = function () {
+      if (stopping) return;
+      stopping = true;
+      try { if (CapSR.stop) CapSR.stop(); } catch (e) {}
+      setTimeout(function () {
+        endUI(lastText ? '语音已转成文字' : '没听到内容，再说一次', lastText ? 'ok' : 'warn');
+      }, 400);
+    };
+    try { CapSR.removeAllListeners && CapSR.removeAllListeners(); } catch (e) {}
+    try {
+      CapSR.addListener('partialResults', function (data) {
+        var t = (data && data.matches && data.matches[0]) || '';
+        if (t) { lastText = t; apply(t); }
+      });
+      CapSR.addListener('listeningState', function (data) {
+        if (data && data.status === 'stopped') { dict.stop && dict.stop(); }
+      });
+    } catch (e) {}
+    setStatus('准备麦克风…', '');
+    CapSR.requestPermissions().then(function (p) {
+      var st = p && p.speechRecognition;
+      if (st && st !== 'granted') { endUI('没给语音识别权限，去手机设置里允许', 'err'); return; }
+      return CapSR.start({ language: 'zh-CN', partialResults: true, popup: false });
+    }).catch(function (e) {
+      endUI('识别失败：' + ((e && e.message) || e), 'err');
+    });
+  }
 
   // ---------- 本地存储 ----------
   function lsGet(k, d) {
@@ -533,43 +690,15 @@ input:focus{border-color:var(--accent)}
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
   });
 
-  // ---------- 语音 ----------
-  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var rec = null, recBase = '';
-  if (!SR) {
-    $('#btnVoice').style.display = 'none';
-  } else {
-    $('#btnVoice').addEventListener('click', function () {
-      var btn = $('#btnVoice');
-      if (rec) { try { rec.stop(); } catch (e) {} return; }
-      rec = new SR();
-      rec.lang = 'zh-CN';
-      rec.continuous = true;
-      rec.interimResults = true;
-      recBase = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
-      var finalText = '';
-      rec.onresult = function (ev) {
-        var interim = '';
-        for (var i = ev.resultIndex; i < ev.results.length; i++) {
-          var r = ev.results[i];
-          if (r.isFinal) finalText += r[0].transcript;
-          else interim += r[0].transcript;
-        }
-        input.value = recBase + finalText + interim;
-      };
-      rec.onerror = function (e) {
-        setStatus('语音不可用：' + (e.error || '未知'), 'warn');
-        stopRec();
-      };
-      rec.onend = function () { stopRec(); };
-      function stopRec() {
-        rec = null;
-        btn.classList.remove('rec');
-        setStatus(recBase ? '语音结束' : '已取消', '');
-      }
-      btn.classList.add('rec');
-      setStatus('在听… 说完点一下麦克风', '');
-      try { rec.start(); } catch (e) { stopRec(); }
+  // ---------- 语音按钮绑定（两个输入框共用同一套逻辑）----------
+  $('#btnVoice').addEventListener('click', function () { dictate($('#btnVoice'), input); });
+  $('#btnChatVoice').addEventListener('click', function () {
+    dictate($('#btnChatVoice'), $('#chatInput'));
+  });
+  if (!dictAvailable()) {
+    ['#btnVoice', '#btnChatVoice'].forEach(function (sel) {
+      var b = $(sel);
+      if (b) { b.title = '此环境不支持语音（APK/Chrome 可用）'; }
     });
   }
 
@@ -968,7 +1097,7 @@ input:focus{border-color:var(--accent)}
   $('#chatInput').addEventListener('input', function () {
     var el = $('#chatInput');
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    el.style.height = Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.38)) + 'px';
   });
 
   // ---------- 语音 ----------
@@ -977,13 +1106,7 @@ input:focus{border-color:var(--accent)}
   var voiceItems = [];                               // 来自 voices/index.json
   var sysResult = null;                              // 系统语音识别的当场结果
   var sysRecOn = false;
-  var CapSR = null;                                  // Capacitor 语音识别插件（仅 APK 里有）
-  try {
-    if (window.Capacitor && window.Capacitor.Plugins &&
-        window.Capacitor.Plugins.SpeechRecognition) {
-      CapSR = window.Capacitor.Plugins.SpeechRecognition;
-    }
-  } catch (e) { CapSR = null; }
+  // CapSR 已在文件开头统一探测（供速记页/对话页的麦克风共用）
 
   function stemOf(n) { return String(n).replace(/\.[^.]+$/, ''); }
   function fileStamp(d) {
